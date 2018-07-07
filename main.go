@@ -8,9 +8,13 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"time"
 	"path"
+	"time"
 )
+
+const timeFormat = "2006-01-02_15-04-05"
+
+var debug *bool
 
 type Notifications struct {
 	ScanToNotifications struct {
@@ -57,12 +61,14 @@ func notifications(address string) (n Notifications, err error) {
 func scan(path string, options []string) error {
 	c := exec.Command("scanimage", options...)
 	c.Dir = path
-	log.Println(c)
+	if *debug {
+		log.Println(c)
+	}
 	return c.Run()
 }
 
 func mkdir(prefix string) (string, error) {
-	p := path.Join(prefix, time.Now().Format(time.RFC3339))
+	p := path.Join(prefix, time.Now().Format(timeFormat))
 	err := os.Mkdir(p, 0700)
 	if err != nil {
 		return "", err
@@ -72,12 +78,13 @@ func mkdir(prefix string) (string, error) {
 }
 
 type config struct {
-	Address string
-	Sleep   string
-	Path	string
-	Sane struct {
+	Address  string
+	Sleep    string
+	MaxSleep string
+	Path     string
+	Sane     struct {
 		Flatbed []string
-		ADF []string
+		ADF     []string
 	}
 }
 
@@ -108,6 +115,7 @@ func (c config) write(path string) error {
 func main() {
 	configpath := flag.String("config", "config.json", "config file")
 	example := flag.Bool("example", false, "write example config")
+	debug = flag.Bool("debug", false, "debug output")
 	flag.Parse()
 
 	if *configpath == "" {
@@ -133,11 +141,31 @@ func main() {
 		log.Fatal(err)
 	}
 
+	maxsleep, err := time.ParseDuration(c.MaxSleep)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	currentsleep := sleep
+
 	for {
+		if currentsleep > maxsleep {
+			log.Fatal("max sleep reached")
+		}
+
+		time.Sleep(currentsleep)
+
 		n, err := notifications(c.Address)
 		if err != nil {
-			log.Fatal(err)
+			currentsleep = currentsleep * 2
+			if *debug {
+				log.Println(err)
+				log.Println("backing off to %v", currentsleep)
+			}
+			continue
 		}
+
+		currentsleep = sleep
 
 		if n.StartScanNotifications.StartScan == 1 {
 			p, err := mkdir(c.Path)
@@ -152,10 +180,8 @@ func main() {
 
 			err = scan(p, options)
 			if err != nil {
-				log.Fatal(err)
+				log.Println(err)
 			}
 		}
-
-		time.Sleep(sleep)
 	}
 }
